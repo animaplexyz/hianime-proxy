@@ -3,7 +3,8 @@ export default {
         const url = new URL(request.url);
         const origin = request.headers.get('origin') || "*";
         
-        const allowedOrigins = env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : [];
+        const allowedOriginsStr = env.ALLOWED_ORIGINS || "*";
+        const allowedOrigins = allowedOriginsStr.split(',').map(o => o.trim());
         const isAllowed = allowedOrigins.includes("*") || allowedOrigins.includes(origin) || allowedOrigins.length === 0;
 
         if (request.method === "OPTIONS") {
@@ -29,10 +30,13 @@ export default {
             
             const upstreamHeaders = new Headers({
                 "User-Agent": request.headers.get("User-Agent") || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Referer": env.DEFAULT_REFERER || "https://megacloud.blog/",
-                "Origin": env.DEFAULT_ORIGIN || "https://hianime.to"
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Origin": env.DEFAULT_ORIGIN || "https://hianime.to",
+                "Referer": env.DEFAULT_REFERER || "https://megacloud.tv/" // Referer bawaan
             });
 
+            // Timpa Referer melalui URL parameters jika ada
             const headersParam = url.searchParams.get('headers');
             if (headersParam) {
                 try {
@@ -40,14 +44,13 @@ export default {
                     for (const [key, value] of Object.entries(parsedHeaders)) {
                         upstreamHeaders.set(key, value);
                     }
-                } catch(e) { console.error("Invalid headers JSON"); }
+                } catch(e) {}
             }
 
             if (request.headers.has('range')) {
                 upstreamHeaders.set('range', request.headers.get('range'));
             }
 
-            // Tembak server aslinya
             const response = await fetch(targetUrl.href, {
                 method: request.method,
                 headers: upstreamHeaders,
@@ -60,11 +63,20 @@ export default {
             responseHeaders.delete('x-frame-options');
             responseHeaders.delete('content-security-policy');
 
+            if (!response.ok) {
+                return new Response(response.body, { status: response.status, headers: responseHeaders });
+            }
+
             const contentType = responseHeaders.get('content-type') || '';
             const isPlaylist = targetUrl.pathname.toLowerCase().endsWith('.m3u8') || contentType.includes('mpegurl');
 
             if (isPlaylist) {
                 let content = await response.text();
+                
+                if (!content.trim().startsWith('#EXTM3U')) {
+                    responseHeaders.set('Content-Type', 'text/plain');
+                    return new Response(content, { status: 200, headers: responseHeaders });
+                }
                 
                 content = content.split('\n').map(line => {
                     const trimmed = line.trim();
@@ -89,7 +101,7 @@ export default {
                 return new Response(content, { status: 200, headers: responseHeaders });
             }
 
-            return new Response(response.body, { status: response.status, headers: responseHeaders });
+            return new Response(response.body, { status: 200, headers: responseHeaders });
 
         } catch (e) {
             return new Response(JSON.stringify({ error: e.message }), { 
